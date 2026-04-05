@@ -1,4 +1,6 @@
 python-telegram-bot
 requests
 flask
-python-dotenv
+solana
+solders
+base58
