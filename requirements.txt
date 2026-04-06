@@ -6,3 +6,4 @@ solders
 base58
 python-dotenv
 mnemonic
+aiohttp
