@@ -291,7 +291,8 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= RUN =================
 app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
-app.job_queue.run_once(lambda *_: None, 0)
+
+# Add handlers
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(handle_buttons))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
