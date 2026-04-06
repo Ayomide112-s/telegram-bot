@@ -93,7 +93,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---------- MENU ----------
     if query.data == "menu":
         await query.edit_message_text(
-            "🏠SnipeBotPro — Your Ultimate Solana Trading Assistant!",
+            "🏠SnipeBotPro — Your Ultimate Solana Trading Assistant!\n"
+        "Automate sniping, track token prices in real-time, execute lightning-fast swaps, "
+        "and stay ahead of the market with precision tools built for serious traders.",
             reply_markup=main_menu()
         )
 
