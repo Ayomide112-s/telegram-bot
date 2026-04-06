@@ -1,72 +1,94 @@
 import requests
 
-QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
-SWAP_URL = "https://quote-api.jup.ag/v6/swap"
-
+# ================== CONFIG ==================
 SOL = "So11111111111111111111111111111111111111112"
 
-def get_market_price(symbol):
-    try:
-        token_id = TOKEN_MAP.get(symbol.upper())
+BASE_URL = "https://api.jup.ag/swap/v1"
+QUOTE_URL = f"{BASE_URL}/quote"
+SWAP_URL = f"{BASE_URL}/swap"
 
-        if not token_id:
-            return None
+# ================== FUNCTIONS ==================
 
-        url = "https://api.coingecko.com/api/v3/simple/price"
-        params = {
-            "ids": token_id,
-            "vs_currencies": "usd"
-        }
-
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
-
-        if token_id in data:
-            return data[token_id]["usd"]
-
-        return None
-
-    except Exception as e:
-        print("Market Price Error:", e)
-        return None
-
-
-def get_quote(token_mint, amount_lamports):
+def get_token_price(token_mint: str) -> float | None:
+    """
+    Get the price of a token in terms of SOL.
+    Returns price as float or None if failed.
+    """
     try:
         params = {
             "inputMint": SOL,
             "outputMint": token_mint,
-            "amount": amount_lamports,
+            "amount": 1_000_000_000,
             "slippageBps": 50
         }
-
         res = requests.get(QUOTE_URL, params=params, timeout=10)
         data = res.json()
 
-        if "data" not in data or not data["data"]:
+        if not data.get("data"):
+            print(f"[PRICE ERROR] No data for token {token_mint}")
             return None
 
-        return data["data"][0]
+        price = int(data["data"][0]["outAmount"]) / 1e6
+        return price
 
-    except:
+    except Exception as e:
+        print(f"[PRICE EXCEPTION] Token {token_mint}: {e}")
         return None
 
-TOKEN_MAP = {
-    "BONK": "bonk",
-    "SOL": "solana",
-    "ETH": "ethereum",
-    "BTC": "bitcoin"
-}
-def create_swap_tx(quote, user_pubkey):
+
+def get_quote(input_mint: str, output_mint: str, amount: int) -> dict | None:
+    """
+    Fetch a swap quote between two tokens.
+    Returns quote dict or None if failed.
+    """
+    params = {
+        "inputMint": input_mint,
+        "outputMint": output_mint,
+        "amount": amount,
+        "slippageBps": 150,
+        "onlyDirectRoutes": False
+    }
+
     try:
-        body = {
-            "quoteResponse": quote,
-            "userPublicKey": str(user_pubkey),
-            "wrapUnwrapSOL": True
-        }
+        response = requests.get(QUOTE_URL, params=params, timeout=10)
+        data = response.json()
 
-        res = requests.post(SWAP_URL, json=body, timeout=15)
-        return res.json()
+        # Retry with higher slippage if no routes found
+        if not data.get("data"):
+            print("[QUOTE WARNING] No routes found, retrying with higher slippage...")
+            params["slippageBps"] = 300
+            response = requests.get(QUOTE_URL, params=params, timeout=10)
+            data = response.json()
+            if not data.get("data"):
+                print("[QUOTE ERROR] Still no routes found.")
+                return None
 
-    except:
+        return data
+
+    except Exception as e:
+        print(f"[QUOTE EXCEPTION] {e}")
+        return None
+
+
+def create_swap_tx(user_public_key: str, quote_response: dict) -> dict | None:
+    """
+    Create a swap transaction for the user.
+    Returns swap response dict or None if failed.
+    """
+    payload = {
+        "userPublicKey": user_public_key,
+        "quoteResponse": quote_response,
+        "wrapAndUnwrapSol": True
+    }
+
+    try:
+        response = requests.post(SWAP_URL, json=payload, timeout=15)
+        if response.status_code != 200:
+            print(f"[SWAP ERROR] {response.status_code}: {response.text}")
+            return None
+
+        return response.json()
+
+    except Exception as e:
+        print(f"[SWAP EXCEPTION] {e}")
         return None
