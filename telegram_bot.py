@@ -222,8 +222,19 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # MARKET SEARCH
     elif state == "search":
         try:
-            price = get_token_price(text)
-            await update.message.reply_text(f"💰 Price: {price}" if price else "❌ Token not found")
+            info = get_token_info(text)
+
+if not info:
+    await update.message.reply_text("❌ Token not found")
+else:
+    await update.message.reply_text(
+        f"📊 {info['name']} ({info['symbol']})\n\n"
+        f"💰 Price: ${info['price']}\n"
+        f"💧 Liquidity: ${info['liquidity']}\n"
+        f"📈 24h Volume: ${info['volume24h']}\n"
+        f"🏦 FDV: ${info['fdv']}\n\n"
+        f"🔗 Chart: {info['chart']}"
+    )
         except Exception as e:
             print("PRICE ERROR:", e)
             await update.message.reply_text("❌ Failed to fetch price")
