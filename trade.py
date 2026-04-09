@@ -1,94 +1,123 @@
 import requests
+import time
 
-# ================== CONFIG ==================
+# ================= CONSTANT =================
 SOL = "So11111111111111111111111111111111111111112"
 
-BASE_URL = "https://api.jup.ag/swap/v1"
-QUOTE_URL = f"{BASE_URL}/quote"
-SWAP_URL = f"{BASE_URL}/swap"
+JUPITER_QUOTE_API = "https://quote-api.jup.ag/v6/quote"
+JUPITER_SWAP_API = "https://quote-api.jup.ag/v6/swap"
+DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 
-# ================== FUNCTIONS ==================
+HEADERS = {
+    "Content-Type": "application/json"
+}
 
-def get_token_price(token_mint: str) -> float | None:
-    """
-    Get the price of a token in terms of SOL.
-    Returns price as float or None if failed.
-    """
+# ================= PRICE =================
+def get_token_price(token_address):
     try:
-        params = {
-            "inputMint": SOL,
-            "outputMint": token_mint,
-            "amount": 1_000_000_000,
-            "slippageBps": 50
-        }
-        res = requests.get(QUOTE_URL, params=params, timeout=10)
+        url = f"{DEXSCREENER_API}{token_address}"
+        res = requests.get(url, timeout=10)
+
+        if res.status_code != 200:
+            return None
+
         data = res.json()
 
-        if not data.get("data"):
-            print(f"[PRICE ERROR] No data for token {token_mint}")
+        pairs = data.get("pairs", [])
+        if not pairs:
             return None
 
-        price = int(data["data"][0]["outAmount"]) / 1e6
-        return price
+        # Pick best liquidity pair
+        best_pair = max(pairs, key=lambda x: float(x.get("liquidity", {}).get("usd", 0)))
+
+        price = best_pair.get("priceUsd")
+
+        return float(price) if price else None
 
     except Exception as e:
-        print(f"[PRICE EXCEPTION] Token {token_mint}: {e}")
+        print("PRICE ERROR:", e)
         return None
 
 
-def get_quote(input_mint: str, output_mint: str, amount: int) -> dict | None:
-    """
-    Fetch a swap quote between two tokens.
-    Returns quote dict or None if failed.
-    """
-    params = {
-        "inputMint": input_mint,
-        "outputMint": output_mint,
-        "amount": amount,
-        "slippageBps": 150,
-        "onlyDirectRoutes": False
-    }
-
+# ================= TOKEN INFO =================
+def get_token_info(token_address):
     try:
-        response = requests.get(QUOTE_URL, params=params, timeout=10)
-        data = response.json()
+        url = f"{DEXSCREENER_API}{token_address}"
+        res = requests.get(url, timeout=10)
 
-        # Retry with higher slippage if no routes found
-        if not data.get("data"):
-            print("[QUOTE WARNING] No routes found, retrying with higher slippage...")
-            params["slippageBps"] = 300
-            response = requests.get(QUOTE_URL, params=params, timeout=10)
-            data = response.json()
-            if not data.get("data"):
-                print("[QUOTE ERROR] Still no routes found.")
-                return None
+        if res.status_code != 200:
+            return None
 
-        return data
+        data = res.json()
+        pairs = data.get("pairs", [])
+
+        if not pairs:
+            return None
+
+        best_pair = max(pairs, key=lambda x: float(x.get("liquidity", {}).get("usd", 0)))
+
+        return {
+            "name": best_pair.get("baseToken", {}).get("name"),
+            "symbol": best_pair.get("baseToken", {}).get("symbol"),
+            "price": best_pair.get("priceUsd"),
+            "liquidity": best_pair.get("liquidity", {}).get("usd"),
+            "fdv": best_pair.get("fdv"),
+            "volume24h": best_pair.get("volume", {}).get("h24"),
+            "chart": best_pair.get("url")
+        }
 
     except Exception as e:
-        print(f"[QUOTE EXCEPTION] {e}")
+        print("TOKEN INFO ERROR:", e)
         return None
 
 
-def create_swap_tx(user_public_key: str, quote_response: dict) -> dict | None:
-    """
-    Create a swap transaction for the user.
-    Returns swap response dict or None if failed.
-    """
-    payload = {
-        "userPublicKey": user_public_key,
-        "quoteResponse": quote_response,
-        "wrapAndUnwrapSol": True
-    }
-
+# ================= QUOTE =================
+def get_quote(input_mint, output_mint, amount):
     try:
-        response = requests.post(SWAP_URL, json=payload, timeout=15)
-        if response.status_code != 200:
-            print(f"[SWAP ERROR] {response.status_code}: {response.text}")
+        params = {
+            "inputMint": input_mint,
+            "outputMint": output_mint,
+            "amount": amount,
+            "slippageBps": 100,  # 1%
+            "onlyDirectRoutes": False
+        }
+
+        res = requests.get(JUPITER_QUOTE_API, params=params, timeout=10)
+
+        if res.status_code != 200:
+            print("QUOTE ERROR:", res.text)
             return None
 
-        return response.json()
+        data = res.json()
+
+        routes = data.get("data")
+        if not routes:
+            return None
+
+        return routes[0]  # best route
 
     except Exception as e:
-        print(f"[SWAP EXCEPTION] {e}")
+        print("QUOTE ERROR:", e)
+        return None
+
+
+# ================= SWAP =================
+def create_swap_tx(user_pubkey, quote):
+    try:
+        payload = {
+            "userPublicKey": str(user_pubkey),
+            "wrapAndUnwrapSol": True,
+            "quoteResponse": quote
+        }
+
+        res = requests.post(JUPITER_SWAP_API, json=payload, headers=HEADERS, timeout=15)
+
+        if res.status_code != 200:
+            print("SWAP ERROR:", res.text)
+            return None
+
+        return res.json()
+
+    except Exception as e:
+        print("SWAP ERROR:", e)
         return None
