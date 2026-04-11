@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<body style="text-align:center; margin-top:100px;">
+
+<h2>Connect Phantom Wallet</h2>
+
+<button onclick="connect()">Connect</button>
+
+<p id="text"></p>
+
+<script>
+async function connect() {
+    const t = document.getElementById("text");
+
+    if (!window.solana || !window.solana.isPhantom) {
+        t.innerText = "Install Phantom first";
+        return;
+    }
+
+    const res = await window.solana.connect();
+    const wallet = res.publicKey.toString();
+
+    t.innerText = "Connected: " + wallet;
+
+    const params = new URLSearchParams(window.location.search);
+    const user_id = params.get("user_id");
+
+    await fetch("/save_wallet", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({user_id, wallet})
+    });
+}
+</script>
+
+</body>
+</html>
